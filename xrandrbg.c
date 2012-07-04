@@ -205,6 +205,7 @@ void draw_bg(void)
                          screen_layout.outputrects[i][2],
                          screen_layout.outputrects[i][3],
                          img_surf);
+      cairo_surface_destroy(img_surf);
     }
   }
 
@@ -255,8 +256,30 @@ const char *config_get_bg_for_output(const char *outputname)
 
 void render_surface(cairo_t *cr, int x, int y, unsigned int w, unsigned int h, cairo_surface_t *img)
 {
-  cairo_move_to(cr, x, y);
-  cairo_set_source_surface(cr, img, 0.0, 0.0f);
-  cairo_rectangle(cr, 0.0f, 0.0f, w, h);
+  cairo_matrix_t m;
+
+  double scale, tmp;
+  int iw, ih;
+  double ox=0, oy=0;
+
+  iw = cairo_image_surface_get_width(img);
+  ih = cairo_image_surface_get_height(img);
+
+  scale = ((double)w)/((double)iw);
+  tmp = ((double)h)/((double)ih);
+  if (tmp > scale) scale = tmp;
+
+  ox = (iw*scale-w)*0.5;
+  oy = (ih*scale-h)*0.5;
+
+  cairo_get_matrix(cr, &m);
+  cairo_translate(cr, x, y);
+
+  cairo_scale(cr, scale, scale);
+
+  cairo_set_source_surface(cr, img, ox, oy);
+  cairo_rectangle(cr, 0, 0, w, h);
   cairo_fill(cr);
+
+  cairo_set_matrix(cr, &m);
 }
