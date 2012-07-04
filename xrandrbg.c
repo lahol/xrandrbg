@@ -8,6 +8,7 @@
 #include <X11/Xatom.h>
 
 #include <cairo.h>
+#include "images.h"
 
 /* can easily be made more flexible, but for my purpose enough for now */
 #define MAX_OUTPUT 32
@@ -34,11 +35,24 @@ void free_strings(char **strings, int count);
 void draw_bg(void);
 void preserve_resource(void);
 
+const char *config_get_bg_for_output(const char *outputname);
+void render_surface(cairo_t *cr, int x, int y, unsigned int w, unsigned int h, cairo_surface_t *img);
+
+char *config_output_images[MAX_OUTPUT][2];
+
 int main(int argc, char **argv)
 {
   XEvent ev;
   if (init(NULL) != 0) {
     return 1;
+  }
+
+  int i;
+  for (i = 1; i < argc; i+=2) {
+    if (i+2 <= argc) {
+      config_output_images[i/2][0] = strdup(argv[i]);
+      config_output_images[i/2][1] = strdup(argv[i+1]);
+    }
   }
 
   get_screen_layout();
@@ -158,6 +172,7 @@ void draw_bg(void)
   Pixmap pm;
   int i;
   cairo_surface_t *scr_surf;
+  cairo_surface_t *img_surf;
   cairo_t *cr;
   
   XGetWindowAttributes(dsp, root, &attr);
@@ -177,9 +192,20 @@ void draw_bg(void)
   cairo_set_font_size(cr, 42);
 
   for (i = 0; i < screen_layout.noutputs; i++) {
-    cairo_move_to(cr, screen_layout.outputrects[i][0]+20,
-                      screen_layout.outputrects[i][1]+40);
-    cairo_show_text(cr, screen_layout.outputnames[i]);
+    fprintf(stderr, "render output %d\n", i);
+    img_surf = load_image(config_get_bg_for_output(screen_layout.outputnames[i]));
+    if (!img_surf) {
+      cairo_move_to(cr, screen_layout.outputrects[i][0]+20,
+                        screen_layout.outputrects[i][1]+30);
+      cairo_show_text(cr, screen_layout.outputnames[i]);
+    }
+    else {
+      render_surface(cr, screen_layout.outputrects[i][0],
+                         screen_layout.outputrects[i][1],
+                         screen_layout.outputrects[i][2],
+                         screen_layout.outputrects[i][3],
+                         img_surf);
+    }
   }
 
   XSetWindowBackgroundPixmap(dsp, root, pm);
@@ -213,3 +239,24 @@ void free_strings(char **strings, int count)
   }
 }
 
+const char *config_get_bg_for_output(const char *outputname)
+{
+  int i=0;
+  while (i < MAX_OUTPUT && config_output_images[i][0]) {
+    if (!strcmp(outputname, config_output_images[i][0])) {
+      fprintf(stderr, "found %s:%s\n", config_output_images[i][0], config_output_images[i][1]);
+      return config_output_images[i][1];
+    }
+    i++;
+  }
+  fprintf(stderr, "output not found\n");
+  return NULL;
+}
+
+void render_surface(cairo_t *cr, int x, int y, unsigned int w, unsigned int h, cairo_surface_t *img)
+{
+  cairo_move_to(cr, x, y);
+  cairo_set_source_surface(cr, img, 0.0, 0.0f);
+  cairo_rectangle(cr, 0.0f, 0.0f, w, h);
+  cairo_fill(cr);
+}
