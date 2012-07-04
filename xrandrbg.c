@@ -269,8 +269,13 @@ void render_surface(cairo_t *cr, int x, int y, unsigned int w, unsigned int h, c
   tmp = ((double)h)/((double)ih);
   if (tmp > scale) scale = tmp;
 
-  ox = (iw*scale-w)*0.5;
-  oy = (ih*scale-h)*0.5;
+  fprintf(stderr, "iw: %d, ih: %d, w: %d, h: %d, scale: %f\n",
+      iw, ih, w, h, scale);
+
+  ox = (w/scale-iw)*0.5;
+  oy = (h/scale-ih)*0.5;
+
+  fprintf(stderr, "ox: %f, oy: %f\n", ox, oy);
 
   cairo_get_matrix(cr, &m);
   cairo_translate(cr, x, y);
