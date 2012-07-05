@@ -2,16 +2,23 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <confuse.h>
+
 #include <X11/X.h>
 #include <X11/Xlib.h>
 #include <X11/extensions/Xrandr.h>
 #include <X11/Xatom.h>
 
 #include <cairo.h>
+#include <cairo-xlib.h>
 #include "images.h"
 
 /* can easily be made more flexible, but for my purpose enough for now */
 #define MAX_OUTPUT 32
+
+#define HEX_VALUE(c) (((c)>='0' && (c)<='9') ? (c)-'0' : \
+    (((c)>='A' && (c)<= 'F') ? (c)-'A'+10 :\
+     (((c)>='a' && (c)<= 'f') ? (c)-'a'+10 : 0)))
 
 struct ScreenLayout {
   int noutputs;
@@ -34,6 +41,7 @@ int have_randr;
 int error_base;
 
 int init(const char *dpy);
+int init_config(const char *cfgpath);
 void cleanup(void);
 void handle_event(XEvent *event);
 void get_screen_layout(void);
@@ -43,7 +51,16 @@ void free_strings(char **strings, int count);
 void draw_bg(void);
 void preserve_resource(void);
 
-const char *config_get_bg_for_output(const char *outputname);
+int validate_color(cfg_t *cfg, cfg_opt_t *opt);
+int validate_mode(cfg_t *cfg, cfg_opt_t *opt);
+
+void translate_mode(const char *str, enum IMAGE_MODE *mode);
+void translate_color(const char *str, double *r, double *g, double *b);
+
+void config_get_bg_for_output(const char *outputname,
+                              char **filename,
+                              enum IMAGE_MODE *mode,
+                              double *r, double *g, double *b);
 void render_surface(cairo_t *cr, enum IMAGE_MODE mode, int x, int y, unsigned int w, unsigned int h, cairo_surface_t *img);
 void get_image_scale_and_offset(enum IMAGE_MODE mode,
                                 unsigned int img_w,
@@ -55,21 +72,18 @@ void get_image_scale_and_offset(enum IMAGE_MODE mode,
                                 double *offset_x,
                                 double *offset_y);
 
-char *config_output_images[MAX_OUTPUT][2];
+/*char *config_output_images[MAX_OUTPUT][2];*/
+
+cfg_t *config = NULL;
 
 int main(int argc, char **argv)
 {
   XEvent ev;
-  if (init(NULL) != 0) {
+  if (init_config(argc > 1 ? argv[1] : NULL) != 0) {
     return 1;
   }
-
-  int i;
-  for (i = 1; i < argc; i+=2) {
-    if (i+2 <= argc) {
-      config_output_images[i/2][0] = strdup(argv[i]);
-      config_output_images[i/2][1] = strdup(argv[i+1]);
-    }
+  if (init(NULL) != 0) {
+    return 1;
   }
 
   get_screen_layout();
@@ -106,6 +120,66 @@ int init(const char *dpy)
   return 0;
 }
 
+int validate_color(cfg_t *cfg, cfg_opt_t *opt)
+{
+  int i;
+  char *str = cfg_opt_getnstr(opt, 0);
+  if (!str || strlen(str) != 7) {
+    return -1;
+  }
+  if (str[0] != '#') return -1;
+  for (i = 1; i < 7; i++) {
+    if (str[i] >= '0' && str[i] <= '9') continue;
+    if (str[i] >= 'a' && str[i] <= 'f') continue;
+    if (str[i] >= 'A' && str[i] <= 'F') continue;
+    return -1;
+  }
+  return 0;
+}
+
+int validate_mode(cfg_t *cfg, cfg_opt_t *opt)
+{
+  char *str = cfg_opt_getnstr(opt, 0);
+  if (!str) return -1;
+  if (!strcasecmp(str, "centered") ||
+      !strcasecmp(str, "scaled") ||
+      !strcasecmp(str, "zoomed") ||
+      !strcasecmp(str, "zoomed-fill") ||
+      !strcasecmp(str, "tiled")) {
+    return 0;
+  }
+  return -1;
+}
+
+int init_config(const char *cfgpath)
+{
+  cfg_opt_t output_opts[] = {
+    CFG_STR("file", NULL, CFGF_NONE),
+    CFG_STR("color", "#000000", CFGF_NOCASE),
+    CFG_STR("mode", "centered", CFGF_NOCASE),
+    CFG_END()
+  };
+
+  cfg_opt_t opts[] = {
+    CFG_SEC("output", output_opts, CFGF_TITLE | CFGF_MULTI | CFGF_NOCASE),
+    CFG_END()
+  };
+
+  config = cfg_init(opts, CFGF_NONE);
+  cfg_set_validate_func(config, "output|color", validate_color);
+  cfg_set_validate_func(config, "output|mode", validate_mode);
+  if (!cfgpath) {
+    /* use defaults */
+    cfg_parse_buf(config, "output default {}");
+  }
+  else if (cfg_parse(config, cfgpath) == CFG_PARSE_ERROR) {
+    fprintf(stderr, "Config file error\n");
+    return 1;
+  }
+
+  return 0;
+}
+
 void cleanup(void)
 {
   if (root) {
@@ -114,6 +188,10 @@ void cleanup(void)
 
   if (dsp) {
     XCloseDisplay(dsp);
+  }
+
+  if (config) {
+    cfg_free(config);
   }
 }
 
@@ -191,6 +269,9 @@ void draw_bg(void)
   cairo_surface_t *scr_surf;
   cairo_surface_t *img_surf;
   cairo_t *cr;
+  double r, g, b;
+  enum IMAGE_MODE mode;
+  char *filename;
   
   XGetWindowAttributes(dsp, root, &attr);
 
@@ -209,15 +290,25 @@ void draw_bg(void)
   cairo_set_font_size(cr, 42);
 
   for (i = 0; i < screen_layout.noutputs; i++) {
-    fprintf(stderr, "render output %d\n", i);
-    img_surf = load_image(config_get_bg_for_output(screen_layout.outputnames[i]));
-    if (!img_surf) {
-      cairo_move_to(cr, screen_layout.outputrects[i][0]+20,
-                        screen_layout.outputrects[i][1]+30);
-      cairo_show_text(cr, screen_layout.outputnames[i]);
+    config_get_bg_for_output(screen_layout.outputnames[i],
+                             &filename,
+                             &mode,
+                             &r, &g, &b);
+    if (filename) {
+      img_surf = load_image(filename);
     }
     else {
-      render_surface(cr, IM_ZOOMED_FILL,
+      img_surf = NULL;
+    }
+    cairo_set_source_rgb(cr, r, g, b);
+    cairo_rectangle(cr,
+                    screen_layout.outputrects[i][0],
+                    screen_layout.outputrects[i][1],
+                    screen_layout.outputrects[i][2],
+                    screen_layout.outputrects[i][3]);
+    cairo_fill(cr);
+    if (img_surf) {
+      render_surface(cr, mode,
                          screen_layout.outputrects[i][0],
                          screen_layout.outputrects[i][1],
                          screen_layout.outputrects[i][2],
@@ -258,18 +349,75 @@ void free_strings(char **strings, int count)
   }
 }
 
-const char *config_get_bg_for_output(const char *outputname)
+void translate_mode(const char *str, enum IMAGE_MODE *mode)
 {
-  int i=0;
-  while (i < MAX_OUTPUT && config_output_images[i][0]) {
-    if (!strcmp(outputname, config_output_images[i][0])) {
-      fprintf(stderr, "found %s:%s\n", config_output_images[i][0], config_output_images[i][1]);
-      return config_output_images[i][1];
-    }
-    i++;
+  if (!mode) return;
+  if (!str) *mode = IM_CENTERED;
+
+  if (!strcasecmp(str, "scaled"))
+    *mode = IM_SCALED;
+  else if (!strcasecmp(str, "zoomed"))
+    *mode = IM_ZOOMED;
+  else if (!strcasecmp(str, "zoomed-fill"))
+    *mode = IM_ZOOMED_FILL;
+  else if (!strcasecmp(str, "tiled"))
+    *mode = IM_TILED;
+}
+
+void translate_color(const char *str, double *r, double *g, double *b)
+{
+  if (r) *r = 0.0f;
+  if (g) *g = 0.0f;
+  if (b) *b = 0.0f;
+
+  if (!str || strlen(str) != 7) {
+    return;
   }
-  fprintf(stderr, "output not found\n");
-  return NULL;
+
+  if (r) *r = (HEX_VALUE(str[1])*16+HEX_VALUE(str[2]))*0.00390625;
+  if (g) *g = (HEX_VALUE(str[3])*16+HEX_VALUE(str[4]))*0.00390625;
+  if (b) *b = (HEX_VALUE(str[5])*16+HEX_VALUE(str[6]))*0.00390625;
+}
+
+void config_get_bg_for_output(const char *outputname,
+                              char **filename,
+                              enum IMAGE_MODE *mode,
+                              double *r, double *g, double *b)
+{
+  cfg_t *cfg_output = NULL, *cfg_default = NULL;
+  int i, j;
+
+  double red = 0.0f, green = 0.0f, blue = 0.0f;
+  enum IMAGE_MODE im = IM_CENTERED;
+  char *fn = NULL;
+
+  for (i = 0; i < cfg_size(config, "output"); i++) {
+    cfg_output = cfg_getnsec(config, "output", i);
+    if (outputname && !strcasecmp(outputname, cfg_title(cfg_output))) {
+      /* found the section for this output */
+      break;
+    }
+    else if (!strcasecmp("default", cfg_title(cfg_output))) {
+      cfg_default = cfg_output;
+    }
+  }
+
+  if (!cfg_output) {
+    if (cfg_default) {
+      cfg_output = cfg_default;
+    }
+  }
+  if (cfg_output) {
+    fn = cfg_getstr(cfg_output, "file");
+    translate_mode(cfg_getstr(cfg_output, "mode"), &im);
+    translate_color(cfg_getstr(cfg_output, "color"), &red, &green, &blue);
+  }
+
+  if (filename) *filename = fn;
+  if (mode) *mode = im;
+  if (r) *r = red;
+  if (g) *g = green;
+  if (b) *b = blue;
 }
 
 void render_surface(cairo_t *cr, enum IMAGE_MODE mode, int x, int y, unsigned int w, unsigned int h, cairo_surface_t *img)

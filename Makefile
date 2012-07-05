@@ -1,5 +1,5 @@
 CC=gcc
-LIBS=-lX11 -lXrandr `pkg-config --libs cairo`
+LIBS=-lX11 -lXrandr `pkg-config --libs cairo` -lconfuse
 CFLAGS=`pkg-config --cflags cairo`
 
 all: xrandrbg
