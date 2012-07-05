@@ -1,0 +1,11 @@
+Globbing
+ Handle ~ and $HOME correctly.
+
+Cache image surfaces
+ Images should not be loaded everytime they are used.
+
+Support other file formats
+ Support at least jpg.
+
+Documentation
+ Add man pages and comment the code.
