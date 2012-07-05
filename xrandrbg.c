@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
+#include <unistd.h>
 
 #include <confuse.h>
 
@@ -52,6 +54,7 @@ void handle_event(XEvent *event);
 void get_screen_layout(void);
 void update(XEvent *ev);
 void free_strings(char **strings, int count);
+void sig_handler(int i);
 
 void draw_bg(void);
 void preserve_resource(void);
@@ -77,29 +80,68 @@ void get_image_scale_and_offset(enum IMAGE_MODE mode,
                                 double *offset_x,
                                 double *offset_y);
 
-/*char *config_output_images[MAX_OUTPUT][2];*/
-
 cfg_t *config = NULL;
+
+int sig_pipe[2] = { -1, -1};
 
 int main(int argc, char **argv)
 {
   XEvent ev;
+  int x11_fd, maxfd;
+  fd_set fds;
+  struct sigaction _sgn;
+
   if (init_config(argc > 1 ? argv[1] : NULL) != 0) {
     return 1;
   }
   if (init(NULL) != 0) {
+    cleanup();
+    return 1;
+  }
+
+  if (pipe(sig_pipe) != 0) {
+    cleanup();
     return 1;
   }
 
   get_screen_layout();
   draw_bg();
 
+  x11_fd = ConnectionNumber(dsp);
+  maxfd = (x11_fd > sig_pipe[0] ? x11_fd : sig_pipe[0])+1;
+
+  memset(&_sgn, 0, sizeof(struct sigaction));
+  _sgn.sa_handler = sig_handler;
+  sigaction(SIGINT, &_sgn, NULL);
+  sigaction(SIGTERM, &_sgn, NULL);
+
   while (1) {
-    XNextEvent(dsp, &ev);
-    handle_event(&ev);
+    FD_ZERO(&fds);
+    FD_SET(x11_fd, &fds);
+    FD_SET(sig_pipe[0], &fds);
+
+    if (select(maxfd, &fds, NULL, NULL, NULL) < 0) {
+      fprintf(stderr, "Error received\n");
+      break;
+    }
+    if (FD_ISSET(x11_fd, &fds)) {
+      fprintf(stderr, "X11 event\n");
+      while (XPending(dsp)) {
+        XNextEvent(dsp, &ev);
+        handle_event(&ev);
+      }
+    }
+    else if (FD_ISSET(sig_pipe[0], &fds)) {
+      break;
+    }
   }
 
-/*  cleanup();*/
+  cleanup();
+}
+
+void sig_handler(int i) {
+  fprintf(stderr, "sig handler\n");
+  write(sig_pipe[1], "quit", 4);
 }
 
 int init(const char *dpy)
@@ -111,7 +153,6 @@ int init(const char *dpy)
 
   root = RootWindow(dsp, DefaultScreen(dsp));
   if (!root) {
-    XCloseDisplay(dsp);
     return 1;
   }
 
@@ -187,6 +228,12 @@ int init_config(const char *cfgpath)
 
 void cleanup(void)
 {
+  if (sig_pipe[0] != -1) {
+    close(sig_pipe[0]);
+  }
+  if (sig_pipe[1] != -1) {
+    close(sig_pipe[1]);
+  }
   if (root) {
     XDestroyWindow(dsp, root);
   }
