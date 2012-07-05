@@ -6,6 +6,7 @@
 #include <string.h>
 #include <signal.h>
 #include <unistd.h>
+#include <setjmp.h>
 
 #include <confuse.h>
 
@@ -82,13 +83,15 @@ void get_image_scale_and_offset(enum IMAGE_MODE mode,
 
 cfg_t *config = NULL;
 
-int sig_pipe[2] = { -1, -1};
+jmp_buf jump_buffer;
+int done = 0;
 
 int main(int argc, char **argv)
 {
   XEvent ev;
   int x11_fd, maxfd;
   fd_set fds;
+  sigset_t sigset;
   struct sigaction _sgn;
 
   if (init_config(argc > 1 ? argv[1] : NULL) != 0) {
@@ -99,17 +102,11 @@ int main(int argc, char **argv)
     return 1;
   }
 
-  if (pipe(sig_pipe) != 0) {
-    cleanup();
-    return 1;
-  }
-
   get_screen_layout();
   draw_bg();
 
   x11_fd = ConnectionNumber(dsp);
-  maxfd = (x11_fd > sig_pipe[0] ? x11_fd : sig_pipe[0])+1;
-
+ 
   memset(&_sgn, 0, sizeof(struct sigaction));
   _sgn.sa_handler = sig_handler;
   sigaction(SIGINT, &_sgn, NULL);
@@ -118,30 +115,31 @@ int main(int argc, char **argv)
   while (1) {
     FD_ZERO(&fds);
     FD_SET(x11_fd, &fds);
-    FD_SET(sig_pipe[0], &fds);
 
-    if (select(maxfd, &fds, NULL, NULL, NULL) < 0) {
-      fprintf(stderr, "Error received\n");
+    sigsetjmp(jump_buffer, 0);
+    if (done) {
+      break;
+    }
+
+    if (select(x11_fd+1, &fds, NULL, NULL, NULL) < 0) {
+      perror("Error received");
       break;
     }
     if (FD_ISSET(x11_fd, &fds)) {
-      fprintf(stderr, "X11 event\n");
       while (XPending(dsp)) {
         XNextEvent(dsp, &ev);
         handle_event(&ev);
       }
     }
-    else if (FD_ISSET(sig_pipe[0], &fds)) {
-      break;
-    }
   }
 
   cleanup();
+  return 0;
 }
 
 void sig_handler(int i) {
-  fprintf(stderr, "sig handler\n");
-  write(sig_pipe[1], "quit", 4);
+  done = 1;
+  siglongjmp(jump_buffer, 0);
 }
 
 int init(const char *dpy)
@@ -228,12 +226,12 @@ int init_config(const char *cfgpath)
 
 void cleanup(void)
 {
-  if (sig_pipe[0] != -1) {
+/*  if (sig_pipe[0] != -1) {
     close(sig_pipe[0]);
   }
   if (sig_pipe[1] != -1) {
     close(sig_pipe[1]);
-  }
+  }*/
   if (root) {
     XDestroyWindow(dsp, root);
   }
