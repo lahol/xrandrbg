@@ -1,0 +1,44 @@
+xrandrbg is a tool for setting background images in a
+multihead environment.
+
+Although there are programs that cope with this situation (e.g. feh or nitrogen)
+they required to be run again when the screen configuration changed.
+
+xrandrbg takes advantage of the xrandr extension of the X server (hence the name).
+
+Dependencies:
+  X11, Xrandr, cairo, confuse
+
+The main setup is done via a config file with one ore more output sections, e.g.
+
+output "VGA1" {
+  file = "/home/user/images/vga1.png"
+  color = "#000000"
+  mode = "centered"
+}
+
+If xrandrbg.conf is your configuration file, call
+ xrandr xrandrbg.conf
+
+Currently no globbing is implemented, but will come in the future.
+
+If you specify "default" for the output name, this section is taken for all
+outputs that are not mentioned in this file.
+
+SECTION FIELDS
+
+ file [optional,default empty]
+   The background image to be used for this display. Currently only PNG is supported.
+
+ color [optional,default="#000000"]
+   The background color in HTML notation. Is used to fill the output.
+
+ mode [optional,default="centered"]
+   Valid modes include
+    centered    -- center the image on the output, no scaling is performed
+    scaled      -- fit image on output, aspect ratio is not kept
+    zoomed      -- scale to fit in output, keeping aspect ratio
+    zoomed-fill -- scale so that whole output is filled, keep aspect ratio
+    tiled       -- tile across the output
+
+xrandrbg is under a MIT license, see LICENSE for details.

@@ -1,3 +1,6 @@
+/* Copyright (c) 2012, Holger Langenau
+ * see LICENSE for details
+ */
 #ifndef __IMAGES_H__
 #define __IMAGES_H__
 

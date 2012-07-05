@@ -1,3 +1,6 @@
+/* Copyright (c) 2012, Holger Langenau
+ * see LICENSE for details
+ */
 #include "images.h"
 #include <stdio.h>
 #include <stdlib.h>
