@@ -20,6 +20,8 @@
     (((c)>='A' && (c)<= 'F') ? (c)-'A'+10 :\
      (((c)>='a' && (c)<= 'f') ? (c)-'a'+10 : 0)))
 
+#define MIN(a,b) (((a) <= (b)) ? (a) : (b))
+
 struct ScreenLayout {
   int noutputs;
   int outputrects[MAX_OUTPUT][4];
@@ -423,24 +425,58 @@ void config_get_bg_for_output(const char *outputname,
 void render_surface(cairo_t *cr, enum IMAGE_MODE mode, int x, int y, unsigned int w, unsigned int h, cairo_surface_t *img)
 {
   cairo_matrix_t m;
+  cairo_matrix_t tilepos;
 
   double scale_x, scale_y;
   int iw, ih;
   double ox=0, oy=0;
+  int tiles_x, tiles_y;
+  int i, j;
+  int tw, th;
 
   iw = cairo_image_surface_get_width(img);
   ih = cairo_image_surface_get_height(img);
+
+  if (w <= 0 || h <= 0 || iw <= 0 || ih <= 0) {
+    return;
+  }
 
   get_image_scale_and_offset(mode, iw, ih, w, h, &scale_x, &scale_y, &ox, &oy);
 
   cairo_get_matrix(cr, &m);
   cairo_translate(cr, x, y);
 
-  cairo_scale(cr, scale_x, scale_y);
+  if (mode != IM_TILED) {
+    cairo_scale(cr, scale_x, scale_y);
 
-  cairo_set_source_surface(cr, img, ox, oy);
-  cairo_rectangle(cr, 0, 0, w, h);
-  cairo_fill(cr);
+    cairo_set_source_surface(cr, img, ox, oy);
+    cairo_rectangle(cr, 0, 0, w, h);
+    cairo_fill(cr);
+  }
+  else {
+    tiles_x = w/iw + (w%iw ? 1 : 0);
+    tiles_y = h/ih + (h%ih ? 1 : 0);
+
+    th = ih;
+    for (i = 1; i <= tiles_y; i++) {
+      cairo_get_matrix(cr, &tilepos);
+      if (i == tiles_y) {
+        th = h-(i-1)*ih;
+      }
+      tw = iw;
+      for (j = 1; j <= tiles_x; j++) {
+        if (j == tiles_x) {
+          tw = w-(j-1)*iw;
+        }
+        cairo_set_source_surface(cr, img, 0, 0);
+        cairo_rectangle(cr, 0, 0, tw, th);
+        cairo_fill(cr);
+        cairo_translate(cr, iw, 0);
+      }
+      cairo_set_matrix(cr, &tilepos);
+      cairo_translate(cr, 0, ih);
+    }
+  }
 
   cairo_set_matrix(cr, &m);
 }
