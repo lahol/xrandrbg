@@ -19,6 +19,14 @@ struct ScreenLayout {
   char *outputnames[MAX_OUTPUT];
 } screen_layout;
 
+enum IMAGE_MODE {
+  IM_CENTERED = 0,
+  IM_SCALED,
+  IM_ZOOMED,
+  IM_ZOOMED_FILL,
+  IM_TILED
+};
+
 Display *dsp = NULL;
 Window root = 0;
 int randr_eventbase;
@@ -36,7 +44,16 @@ void draw_bg(void);
 void preserve_resource(void);
 
 const char *config_get_bg_for_output(const char *outputname);
-void render_surface(cairo_t *cr, int x, int y, unsigned int w, unsigned int h, cairo_surface_t *img);
+void render_surface(cairo_t *cr, enum IMAGE_MODE mode, int x, int y, unsigned int w, unsigned int h, cairo_surface_t *img);
+void get_image_scale_and_offset(enum IMAGE_MODE mode,
+                                unsigned int img_w,
+                                unsigned int img_h,
+                                unsigned int out_w,
+                                unsigned int out_h,
+                                double *scale_x,
+                                double *scale_y,
+                                double *offset_x,
+                                double *offset_y);
 
 char *config_output_images[MAX_OUTPUT][2];
 
@@ -200,7 +217,8 @@ void draw_bg(void)
       cairo_show_text(cr, screen_layout.outputnames[i]);
     }
     else {
-      render_surface(cr, screen_layout.outputrects[i][0],
+      render_surface(cr, IM_ZOOMED_FILL,
+                         screen_layout.outputrects[i][0],
                          screen_layout.outputrects[i][1],
                          screen_layout.outputrects[i][2],
                          screen_layout.outputrects[i][3],
@@ -254,33 +272,23 @@ const char *config_get_bg_for_output(const char *outputname)
   return NULL;
 }
 
-void render_surface(cairo_t *cr, int x, int y, unsigned int w, unsigned int h, cairo_surface_t *img)
+void render_surface(cairo_t *cr, enum IMAGE_MODE mode, int x, int y, unsigned int w, unsigned int h, cairo_surface_t *img)
 {
   cairo_matrix_t m;
 
-  double scale, tmp;
+  double scale_x, scale_y;
   int iw, ih;
   double ox=0, oy=0;
 
   iw = cairo_image_surface_get_width(img);
   ih = cairo_image_surface_get_height(img);
 
-  scale = ((double)w)/((double)iw);
-  tmp = ((double)h)/((double)ih);
-  if (tmp > scale) scale = tmp;
-
-  fprintf(stderr, "iw: %d, ih: %d, w: %d, h: %d, scale: %f\n",
-      iw, ih, w, h, scale);
-
-  ox = (w/scale-iw)*0.5;
-  oy = (h/scale-ih)*0.5;
-
-  fprintf(stderr, "ox: %f, oy: %f\n", ox, oy);
+  get_image_scale_and_offset(mode, iw, ih, w, h, &scale_x, &scale_y, &ox, &oy);
 
   cairo_get_matrix(cr, &m);
   cairo_translate(cr, x, y);
 
-  cairo_scale(cr, scale, scale);
+  cairo_scale(cr, scale_x, scale_y);
 
   cairo_set_source_surface(cr, img, ox, oy);
   cairo_rectangle(cr, 0, 0, w, h);
@@ -288,3 +296,62 @@ void render_surface(cairo_t *cr, int x, int y, unsigned int w, unsigned int h, c
 
   cairo_set_matrix(cr, &m);
 }
+
+void get_image_scale_and_offset(enum IMAGE_MODE mode,
+                                unsigned int img_w,
+                                unsigned int img_h,
+                                unsigned int out_w,
+                                unsigned int out_h,
+                                double *scale_x,
+                                double *scale_y,
+                                double *offset_x,
+                                double *offset_y)
+{
+  double sx=1.0f, sy=1.0f, ox=0.0f, oy=0.0f;
+
+  switch (mode) {
+    default:
+    case IM_CENTERED:
+      /* center image on screen */
+      ox = (out_w-img_w)*0.5f;
+      oy = (out_h-img_h)*0.5f;
+      break;
+    case IM_SCALED:
+      /* scale image with no respect for aspect ratio */
+      sx = ((double)out_w)/((double)img_w);
+      sy = ((double)out_h)/((double)img_h);
+      break;
+    case IM_ZOOMED:
+      /* zoom the image as big as possible, while keeping aspect ratio,
+       * rest will be filled with background color */
+      sx = ((double)out_w)/((double)img_w);
+      sy = ((double)out_h)/((double)img_h);
+      if (sy < sx) sx = sy;
+      else sy = sx;
+
+      ox = (out_w/sx-img_w)*0.5f;
+      oy = (out_h/sy-img_h)*0.5f;
+      break;
+    case IM_ZOOMED_FILL:
+      /* zoom the image so that one side fills the output,
+       * the other may be cut off, keep aspect ratio */
+      sx = ((double)out_w)/((double)img_w);
+      sy = ((double)out_h)/((double)img_h);
+      if (sy > sx) sx = sy;
+      else sy = sx;
+
+      ox = (out_w/sx-img_w)*0.5f;
+      oy = (out_h/sy-img_h)*0.5f;
+
+      break;
+    case IM_TILED:
+      /* nothing to do here */
+      break;
+  }
+
+  if (scale_x) *scale_x = sx;
+  if (scale_y) *scale_y = sy;
+  if (offset_x) *offset_x = ox;
+  if (offset_y) *offset_y = oy;
+}
+
