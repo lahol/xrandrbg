@@ -1,11 +1,14 @@
 Globbing
  Handle ~ and $HOME correctly.
 
-Cache image surfaces
- Images should not be loaded everytime they are used.
+Option parsing
+ Handle command line switches. At least config, help, info, version
+ should be supported.
 
-Support other file formats
- Support at least jpg.
+Standard configuration file
+ The program should look on some standard path for a configuration
+ file. A different file should be specified via a command line switch
+ (--config=file).
 
 Documentation
  Add man pages and comment the code.

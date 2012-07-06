@@ -1,7 +1,7 @@
 include config.mk
 
-SRC = xrandrbg.c images.c
-HEADERS = images.h
+SRC = xrandrbg.c
+HEADERS = 
 DISTFILES = Makefile config.mk LICENSE README TODO
 OBJ = ${SRC:.c=.o}
 
@@ -12,8 +12,8 @@ all: xrandrbg
 
 ${OBJ}: config.mk ${HEADERS}
 
-xrandrbg: xrandrbg.o images.o
-	@$(CC) -o $@ xrandrbg.o images.o $(LDFLAGS)
+xrandrbg: xrandrbg.o
+	@$(CC) -o $@ xrandrbg.o $(LDFLAGS)
 
 clean:
 	@rm -f xrandrbg ${OBJ} xrandrbg-${VERSION}.tar.gz

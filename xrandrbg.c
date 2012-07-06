@@ -16,9 +16,7 @@
 #include <X11/extensions/Xrandr.h>
 #include <X11/Xatom.h>
 
-#include <cairo.h>
-#include <cairo-xlib.h>
-#include "images.h"
+#include <Imlib2.h>
 
 /* can easily be made more flexible, but for my purpose enough for now */
 #define MAX_OUTPUT 32
@@ -45,6 +43,7 @@ enum IMAGE_MODE {
 
 Display *dsp = NULL;
 Window root = 0;
+Colormap colormap;
 int randr_eventbase;
 int have_randr;
 int error_base;
@@ -70,8 +69,8 @@ void translate_color(const char *str, double *r, double *g, double *b);
 void config_get_bg_for_output(const char *outputname,
                               char **filename,
                               enum IMAGE_MODE *mode,
-                              double *r, double *g, double *b);
-void render_surface(cairo_t *cr, enum IMAGE_MODE mode, int x, int y, unsigned int w, unsigned int h, cairo_surface_t *img);
+                              char *color_string);
+void render_surface(enum IMAGE_MODE mode, int x, int y, unsigned int w, unsigned int h, Imlib_Image img);
 void get_image_scale_and_offset(enum IMAGE_MODE mode,
                                 unsigned int img_w,
                                 unsigned int img_h,
@@ -81,6 +80,13 @@ void get_image_scale_and_offset(enum IMAGE_MODE mode,
                                 double *scale_y,
                                 double *offset_x,
                                 double *offset_y);
+void get_image_offset_and_width(enum IMAGE_MODE mode,
+                                unsigned int img_w,
+                                unsigned int img_h,
+                                unsigned int out_w,
+                                unsigned int out_h,
+                                int *src_x, int *src_y, int *src_w, int *src_h,
+                                int *dst_x, int *dst_y, int *dst_w, int *dst_h);
 
 cfg_t *config = NULL;
 
@@ -161,6 +167,12 @@ int init(const char *dpy)
 
   XRRSelectInput(dsp, root, RRScreenChangeNotifyMask | RROutputChangeNotifyMask);
 
+  colormap = DefaultColormap(dsp, DefaultScreen(dsp));
+
+  imlib_context_set_display(dsp);
+  imlib_context_set_visual(DefaultVisual(dsp, DefaultScreen(dsp)));
+  imlib_context_set_colormap(colormap);
+
   return 0;
 }
 
@@ -226,12 +238,6 @@ int init_config(const char *cfgpath)
 
 void cleanup(void)
 {
-/*  if (sig_pipe[0] != -1) {
-    close(sig_pipe[0]);
-  }
-  if (sig_pipe[1] != -1) {
-    close(sig_pipe[1]);
-  }*/
   if (root) {
     XDestroyWindow(dsp, root);
   }
@@ -316,55 +322,44 @@ void draw_bg(void)
   XWindowAttributes attr;
   Pixmap pm;
   int i;
-  cairo_surface_t *scr_surf;
-  cairo_surface_t *img_surf;
-  cairo_t *cr;
-  double r, g, b;
+  Imlib_Image img;
   enum IMAGE_MODE mode;
   char *filename;
+  GC gc;
+  XColor bg_col;
+  char col_str[8];
   
   XGetWindowAttributes(dsp, root, &attr);
 
   pm = XCreatePixmap(dsp, root, attr.width, attr.height, attr.depth);
-
-  scr_surf = cairo_xlib_surface_create(dsp, pm, attr.visual, attr.width, attr.height);
-
-  cr = cairo_create(scr_surf);
-  
-  cairo_set_source_rgb(cr, 0, 0, 0);
-  cairo_rectangle(cr, 0, 0, attr.width, attr.height);
-  cairo_fill(cr);
-
-  /* draw to pixmap */
-  cairo_set_source_rgb(cr, 1, 1, 1);
-  cairo_set_font_size(cr, 42);
+  imlib_context_set_drawable(pm);
 
   for (i = 0; i < screen_layout.noutputs; i++) {
     config_get_bg_for_output(screen_layout.outputnames[i],
                              &filename,
                              &mode,
-                             &r, &g, &b);
+                             col_str);
+    gc = XCreateGC(dsp, pm, 0, 0);
+    XParseColor(dsp, colormap, col_str, &bg_col);
+    XAllocColor(dsp, colormap, &bg_col);
+    XSetForeground(dsp, gc, bg_col.pixel);
+    XFillRectangle(dsp, pm, gc,
+                   screen_layout.outputrects[i][0],
+                   screen_layout.outputrects[i][1],
+                   screen_layout.outputrects[i][2],
+                   screen_layout.outputrects[i][3]);
     if (filename) {
-      img_surf = load_image(filename);
+      img = imlib_load_image(filename);
+      render_surface(mode,
+                     screen_layout.outputrects[i][0],
+                     screen_layout.outputrects[i][1],
+                     screen_layout.outputrects[i][2],
+                     screen_layout.outputrects[i][3],
+                     img);
+      imlib_free_image();
     }
     else {
-      img_surf = NULL;
-    }
-    cairo_set_source_rgb(cr, r, g, b);
-    cairo_rectangle(cr,
-                    screen_layout.outputrects[i][0],
-                    screen_layout.outputrects[i][1],
-                    screen_layout.outputrects[i][2],
-                    screen_layout.outputrects[i][3]);
-    cairo_fill(cr);
-    if (img_surf) {
-      render_surface(cr, mode,
-                         screen_layout.outputrects[i][0],
-                         screen_layout.outputrects[i][1],
-                         screen_layout.outputrects[i][2],
-                         screen_layout.outputrects[i][3],
-                         img_surf);
-      cairo_surface_destroy(img_surf);
+      img = NULL;
     }
   }
 
@@ -432,12 +427,12 @@ void translate_color(const char *str, double *r, double *g, double *b)
 void config_get_bg_for_output(const char *outputname,
                               char **filename,
                               enum IMAGE_MODE *mode,
-                              double *r, double *g, double *b)
+                              char *color_string)
 {
   cfg_t *cfg_output = NULL, *cfg_default = NULL;
   int i;
 
-  double red = 0.0f, green = 0.0f, blue = 0.0f;
+  char cstr[] = "#000000";
   enum IMAGE_MODE im = IM_CENTERED;
   char *fn = NULL;
 
@@ -460,130 +455,150 @@ void config_get_bg_for_output(const char *outputname,
   if (cfg_output) {
     fn = cfg_getstr(cfg_output, "file");
     translate_mode(cfg_getstr(cfg_output, "mode"), &im);
-    translate_color(cfg_getstr(cfg_output, "color"), &red, &green, &blue);
+    strcpy(cstr, cfg_getstr(cfg_output, "color"));
   }
 
   if (filename) *filename = fn;
   if (mode) *mode = im;
-  if (r) *r = red;
-  if (g) *g = green;
-  if (b) *b = blue;
+  if (color_string) strcpy(color_string, cstr);
 }
 
-void render_surface(cairo_t *cr, enum IMAGE_MODE mode, int x, int y, unsigned int w, unsigned int h, cairo_surface_t *img)
+void render_surface(enum IMAGE_MODE mode, int x, int y, unsigned int w, unsigned int h, Imlib_Image img)
 {
-  cairo_matrix_t m;
-  cairo_matrix_t tilepos;
-
-  double scale_x, scale_y;
   int iw, ih;
-  double ox=0, oy=0;
   int tiles_x, tiles_y;
   int i, j;
   int tw, th;
 
-  iw = cairo_image_surface_get_width(img);
-  ih = cairo_image_surface_get_height(img);
+  int src_x, src_y, src_w, src_h;
+  int dst_x, dst_y, dst_w, dst_h;
+
+  imlib_context_set_image(img);
+  iw = imlib_image_get_width();
+  ih = imlib_image_get_height();
 
   if (w <= 0 || h <= 0 || iw <= 0 || ih <= 0) {
     return;
   }
 
-  get_image_scale_and_offset(mode, iw, ih, w, h, &scale_x, &scale_y, &ox, &oy);
-
-  cairo_get_matrix(cr, &m);
-  cairo_translate(cr, x, y);
-
   if (mode != IM_TILED) {
-    cairo_scale(cr, scale_x, scale_y);
-
-    cairo_set_source_surface(cr, img, ox, oy);
-    cairo_rectangle(cr, 0, 0, w, h);
-    cairo_fill(cr);
+    get_image_offset_and_width(mode, iw, ih, w, h, 
+                               &src_x, &src_y, &src_w, &src_h,
+                               &dst_x, &dst_y, &dst_w, &dst_h);
+    imlib_render_image_part_on_drawable_at_size(src_x, src_y, src_w, src_h,
+                                                x+dst_x, y+dst_y, dst_w, dst_h);
   }
   else {
     tiles_x = w/iw + (w%iw ? 1 : 0);
     tiles_y = h/ih + (h%ih ? 1 : 0);
-
     th = ih;
-    for (i = 1; i <= tiles_y; i++) {
-      cairo_get_matrix(cr, &tilepos);
-      if (i == tiles_y) {
-        th = h-(i-1)*ih;
+    for (i = 0; i <= tiles_y; i++) {
+      if (i == tiles_y-1) {
+        th = h-i*ih;
       }
       tw = iw;
-      for (j = 1; j <= tiles_x; j++) {
-        if (j == tiles_x) {
-          tw = w-(j-1)*iw;
+      for (j = 0; j < tiles_x; j++) {
+        if (j == tiles_x-1) {
+          tw = w-j*iw;
         }
-        cairo_set_source_surface(cr, img, 0, 0);
-        cairo_rectangle(cr, 0, 0, tw, th);
-        cairo_fill(cr);
-        cairo_translate(cr, iw, 0);
+        imlib_render_image_part_on_drawable_at_size(0, 0, tw, th,
+                                                    x+j*iw, y+i*ih, tw, th);
       }
-      cairo_set_matrix(cr, &tilepos);
-      cairo_translate(cr, 0, ih);
     }
   }
-
-  cairo_set_matrix(cr, &m);
 }
 
-void get_image_scale_and_offset(enum IMAGE_MODE mode,
+void get_image_offset_and_width(enum IMAGE_MODE mode,
                                 unsigned int img_w,
                                 unsigned int img_h,
                                 unsigned int out_w,
                                 unsigned int out_h,
-                                double *scale_x,
-                                double *scale_y,
-                                double *offset_x,
-                                double *offset_y)
+                                int *src_x, int *src_y, int *src_w, int *src_h,
+                                int *dst_x, int *dst_y, int *dst_w, int *dst_h)
 {
-  double sx=1.0f, sy=1.0f, ox=0.0f, oy=0.0f;
+  int sx, sy, sw, sh, dx, dy, dw, dh;
+  double scw, sch;
 
   switch (mode) {
     default:
     case IM_CENTERED:
-      /* center image on screen */
-      ox = (out_w-img_w)*0.5f;
-      oy = (out_h-img_h)*0.5f;
+      if (out_w >= img_w) {
+        sx = 0; sw = dw = img_w;
+        dx = (out_w-img_w) >> 1;
+      }
+      else {
+        dx = 0;
+        sw = dw = out_w;
+        sx = (img_w-out_w) >> 1;
+      }
+
+      if (out_h >= img_h) {
+        sy = 0; sh = dh = img_h;
+        dy = (out_h-img_h) >> 1;
+      }
+      else {
+        dy = 0;
+        sh = dh = out_h;
+        sy = (img_h-out_h) >> 1;
+      }
       break;
     case IM_SCALED:
-      /* scale image with no respect for aspect ratio */
-      sx = ((double)out_w)/((double)img_w);
-      sy = ((double)out_h)/((double)img_h);
+      sx = sy = dx = dy = 0;
+      sw = img_w;
+      dw = out_w;
+      sh = img_h;
+      dh = out_h;
       break;
     case IM_ZOOMED:
-      /* zoom the image as big as possible, while keeping aspect ratio,
-       * rest will be filled with background color */
-      sx = ((double)out_w)/((double)img_w);
-      sy = ((double)out_h)/((double)img_h);
-      if (sy < sx) sx = sy;
-      else sy = sx;
+      sx = sy = 0;
+      sw = img_w;
+      sh = img_h;
 
-      ox = (out_w/sx-img_w)*0.5f;
-      oy = (out_h/sy-img_h)*0.5f;
+      scw = ((double)out_w)/((double)img_w);
+      sch = ((double)out_h)/((double)img_h);
+      if (scw < sch) {
+        dx = 0;
+        dw = out_w;
+        dh = (int)(img_h*scw);
+        dy = (out_h-dh) >> 1;
+      }
+      else {
+        dy = 0;
+        dh = out_h;
+        dw = (int)(img_w*sch);
+        dx = (out_w-dw) >> 1;
+      }
       break;
     case IM_ZOOMED_FILL:
-      /* zoom the image so that one side fills the output,
-       * the other may be cut off, keep aspect ratio */
-      sx = ((double)out_w)/((double)img_w);
-      sy = ((double)out_h)/((double)img_h);
-      if (sy > sx) sx = sy;
-      else sy = sx;
+      dx = dy = 0;
+      dw = out_w;
+      dh = out_h;
 
-      ox = (out_w/sx-img_w)*0.5f;
-      oy = (out_h/sy-img_h)*0.5f;
-
-      break;
-    case IM_TILED:
-      /* nothing to do here */
+      scw = ((double)out_w)/((double)img_w);
+      sch = ((double)out_h)/((double)img_h);
+      if (scw > sch) {
+        sx = 0;
+        sw = img_w;
+        sh = (int)(out_h/scw);
+        sy = (img_h-sh) >> 1;
+      }
+      else {
+        sy = 0;
+        sh = img_h;
+        sw = (int)(out_w/sch);
+        sx = (img_w-sw) >> 1;
+      }
       break;
   }
 
-  if (scale_x) *scale_x = sx;
-  if (scale_y) *scale_y = sy;
-  if (offset_x) *offset_x = ox;
-  if (offset_y) *offset_y = oy;
+  if (src_x) *src_x = sx;
+  if (src_y) *src_y = sy;
+  if (src_w) *src_w = sw;
+  if (src_h) *src_h = sh;
+  if (dst_x) *dst_x = dx;
+  if (dst_y) *dst_y = dy;
+  if (dst_w) *dst_w = dw;
+  if (dst_h) *dst_h = dh;
 }
+
 

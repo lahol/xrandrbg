@@ -2,12 +2,15 @@ xrandrbg is a tool for setting background images in a
 multihead environment.
 
 Although there are programs that cope with this situation (e.g. feh or nitrogen)
-they required to be run again when the screen configuration changed.
+they required to be run again when the screen configuration changed. As soon
+as the screen configuration changes xrandrbg sets the background for all
+configured outputs (using the default block, if the new output isn't explicitly
+specified in the configuration).
 
 xrandrbg takes advantage of the xrandr extension of the X server (hence the name).
 
 Dependencies:
-  X11, Xrandr, cairo, confuse
+  X11, Xrandr, imlib2, confuse
 
 The main setup is done via a config file with one ore more output sections, e.g.
 
@@ -28,7 +31,8 @@ outputs that are not mentioned in this file.
 SECTION FIELDS
 
  file [optional,default empty]
-   The background image to be used for this display. Currently only PNG is supported.
+   The background image to be used for this display. This may be any format
+   that imlib2 supports.
 
  color [optional,default="#000000"]
    The background color in HTML notation. Is used to fill the output.
