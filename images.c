@@ -7,8 +7,8 @@
 
 cairo_surface_t *load_image(const char *filename)
 {
-  fprintf(stderr, "trying to load image %s\n", filename);
   cairo_surface_t *img;
+  fprintf(stderr, "trying to load image %s\n", filename);
   if (!filename) {
     return NULL;
   }

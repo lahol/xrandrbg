@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
+#include <sys/select.h>
 #include <unistd.h>
 #include <setjmp.h>
 
@@ -89,9 +90,8 @@ int done = 0;
 int main(int argc, char **argv)
 {
   XEvent ev;
-  int x11_fd, maxfd;
+  int x11_fd;
   fd_set fds;
-  sigset_t sigset;
   struct sigaction _sgn;
 
   if (init_config(argc > 1 ? argv[1] : NULL) != 0) {
@@ -435,7 +435,7 @@ void config_get_bg_for_output(const char *outputname,
                               double *r, double *g, double *b)
 {
   cfg_t *cfg_output = NULL, *cfg_default = NULL;
-  int i, j;
+  int i;
 
   double red = 0.0f, green = 0.0f, blue = 0.0f;
   enum IMAGE_MODE im = IM_CENTERED;
