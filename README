@@ -23,7 +23,7 @@ output "VGA1" {
 If xrandrbg.conf is your configuration file, call
  xrandr xrandrbg.conf
 
-Currently no globbing is implemented, but will come in the future.
+Currently environment variables and ~ are not expanded, but it will come in the future.
 
 If you specify "default" for the output name, this section is taken for all
 outputs that are not mentioned in this file.
