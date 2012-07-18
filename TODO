@@ -1,4 +1,4 @@
-Globbing
+"Environment expansion"
  Handle ~ and $HOME correctly.
 
 Option parsing
