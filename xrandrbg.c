@@ -21,12 +21,6 @@
 /* can easily be made more flexible, but for my purpose enough for now */
 #define MAX_OUTPUT 32
 
-#define HEX_VALUE(c) (((c)>='0' && (c)<='9') ? (c)-'0' : \
-    (((c)>='A' && (c)<= 'F') ? (c)-'A'+10 :\
-     (((c)>='a' && (c)<= 'f') ? (c)-'a'+10 : 0)))
-
-#define MIN(a,b) (((a) <= (b)) ? (a) : (b))
-
 struct ScreenLayout {
   int noutputs;
   int outputrects[MAX_OUTPUT][4];
@@ -64,13 +58,12 @@ int validate_color(cfg_t *cfg, cfg_opt_t *opt);
 int validate_mode(cfg_t *cfg, cfg_opt_t *opt);
 
 void translate_mode(const char *str, enum IMAGE_MODE *mode);
-void translate_color(const char *str, double *r, double *g, double *b);
 
 void config_get_bg_for_output(const char *outputname,
                               char **filename,
                               enum IMAGE_MODE *mode,
                               char *color_string);
-void render_surface(enum IMAGE_MODE mode, int x, int y, unsigned int w, unsigned int h, Imlib_Image img);
+void render_image(enum IMAGE_MODE mode, int x, int y, unsigned int w, unsigned int h, Imlib_Image img);
 void get_image_scale_and_offset(enum IMAGE_MODE mode,
                                 unsigned int img_w,
                                 unsigned int img_h,
@@ -339,6 +332,7 @@ void draw_bg(void)
                              &filename,
                              &mode,
                              col_str);
+    /* fill with background color */
     gc = XCreateGC(dsp, pm, 0, 0);
     XParseColor(dsp, colormap, col_str, &bg_col);
     XAllocColor(dsp, colormap, &bg_col);
@@ -348,25 +342,28 @@ void draw_bg(void)
                    screen_layout.outputrects[i][1],
                    screen_layout.outputrects[i][2],
                    screen_layout.outputrects[i][3]);
+
+    /* if a file is given, try to render that image */
     if (filename) {
       img = imlib_load_image(filename);
-      render_surface(mode,
+      if (img) {
+        render_image(mode,
                      screen_layout.outputrects[i][0],
                      screen_layout.outputrects[i][1],
                      screen_layout.outputrects[i][2],
                      screen_layout.outputrects[i][3],
                      img);
-      imlib_free_image();
-    }
-    else {
-      img = NULL;
+        imlib_free_image();
+      }
     }
   }
 
+  /* set the pixmap as background image of the root window */
   XSetWindowBackgroundPixmap(dsp, root, pm);
   XClearWindow(dsp, root);
   XFreePixmap(dsp, pm);
 
+  /* make changes persistent */
   preserve_resource();
 }
 
@@ -409,21 +406,6 @@ void translate_mode(const char *str, enum IMAGE_MODE *mode)
     *mode = IM_TILED;
 }
 
-void translate_color(const char *str, double *r, double *g, double *b)
-{
-  if (r) *r = 0.0f;
-  if (g) *g = 0.0f;
-  if (b) *b = 0.0f;
-
-  if (!str || strlen(str) != 7) {
-    return;
-  }
-
-  if (r) *r = (HEX_VALUE(str[1])*16+HEX_VALUE(str[2]))*0.00390625;
-  if (g) *g = (HEX_VALUE(str[3])*16+HEX_VALUE(str[4]))*0.00390625;
-  if (b) *b = (HEX_VALUE(str[5])*16+HEX_VALUE(str[6]))*0.00390625;
-}
-
 void config_get_bg_for_output(const char *outputname,
                               char **filename,
                               enum IMAGE_MODE *mode,
@@ -463,7 +445,7 @@ void config_get_bg_for_output(const char *outputname,
   if (color_string) strcpy(color_string, cstr);
 }
 
-void render_surface(enum IMAGE_MODE mode, int x, int y, unsigned int w, unsigned int h, Imlib_Image img)
+void render_image(enum IMAGE_MODE mode, int x, int y, unsigned int w, unsigned int h, Imlib_Image img)
 {
   int iw, ih;
   int tiles_x, tiles_y;
