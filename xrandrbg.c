@@ -7,9 +7,10 @@
 #include <signal.h>
 #include <sys/select.h>
 #include <unistd.h>
-#include <setjmp.h>
 
 #include <confuse.h>
+
+#include <ev.h>
 
 #include <X11/X.h>
 #include <X11/Xlib.h>
@@ -49,7 +50,9 @@ void handle_event(XEvent *event);
 void get_screen_layout(void);
 void update(XEvent *ev);
 void free_strings(char **strings, int count);
-void sig_handler(int i);
+
+void x11_cb(EV_P_ ev_io *w, int revents);
+void signal_cb(EV_P_ ev_signal *w, int revents);
 
 void draw_bg(void);
 void preserve_resource(void);
@@ -83,15 +86,14 @@ void get_image_offset_and_width(enum IMAGE_MODE mode,
 
 cfg_t *config = NULL;
 
-jmp_buf jump_buffer;
-int done = 0;
+ev_io x11_watcher;
+ev_signal sigint_watcher;
+ev_signal sigterm_watcher;
 
 int main(int argc, char **argv)
 {
-  XEvent ev;
   int x11_fd;
-  fd_set fds;
-  struct sigaction _sgn;
+  struct ev_loop *loop = EV_DEFAULT;
 
   if (init_config(argc > 1 ? argv[1] : NULL) != 0) {
     return 1;
@@ -106,39 +108,35 @@ int main(int argc, char **argv)
 
   x11_fd = ConnectionNumber(dsp);
  
-  memset(&_sgn, 0, sizeof(struct sigaction));
-  _sgn.sa_handler = sig_handler;
-  sigaction(SIGINT, &_sgn, NULL);
-  sigaction(SIGTERM, &_sgn, NULL);
+  ev_io_init(&x11_watcher, x11_cb, x11_fd, EV_READ);
+  ev_io_start(loop, &x11_watcher);
 
-  while (1) {
-    FD_ZERO(&fds);
-    FD_SET(x11_fd, &fds);
+  ev_signal_init(&sigint_watcher, signal_cb, SIGINT);
+  ev_signal_start(loop, &sigint_watcher);
 
-    sigsetjmp(jump_buffer, 0);
-    if (done) {
-      break;
-    }
+  ev_signal_init(&sigterm_watcher, signal_cb, SIGTERM);
+  ev_signal_start(loop, &sigterm_watcher);
 
-    if (select(x11_fd+1, &fds, NULL, NULL, NULL) < 0) {
-      perror("Error received");
-      break;
-    }
-    if (FD_ISSET(x11_fd, &fds)) {
-      while (XPending(dsp)) {
-        XNextEvent(dsp, &ev);
-        handle_event(&ev);
-      }
-    }
-  }
+  ev_run(loop, 0);
 
   cleanup();
   return 0;
 }
 
-void sig_handler(int i) {
-  done = 1;
-  siglongjmp(jump_buffer, 0);
+void x11_cb(EV_P_ ev_io *w, int revents)
+{
+  XEvent ev;
+  fprintf(stderr, "X event available\n");
+  while (XPending(dsp)) {
+    XNextEvent(dsp, &ev);
+    handle_event(&ev);
+  }
+}
+
+void signal_cb(EV_P_ ev_signal *w, int revents)
+{
+  fprintf(stderr, "received signal\n");
+  ev_break(EV_A_ EVBREAK_ALL);
 }
 
 int init(const char *dpy)
