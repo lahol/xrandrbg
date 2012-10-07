@@ -126,7 +126,6 @@ int main(int argc, char **argv)
 void x11_cb(EV_P_ ev_io *w, int revents)
 {
   XEvent ev;
-  fprintf(stderr, "X event available\n");
   while (XPending(dsp)) {
     XNextEvent(dsp, &ev);
     handle_event(&ev);
@@ -135,7 +134,6 @@ void x11_cb(EV_P_ ev_io *w, int revents)
 
 void signal_cb(EV_P_ ev_signal *w, int revents)
 {
-  fprintf(stderr, "received signal\n");
   ev_break(EV_A_ EVBREAK_ALL);
 }
 

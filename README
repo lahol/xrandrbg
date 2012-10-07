@@ -10,7 +10,7 @@ specified in the configuration).
 xrandrbg takes advantage of the xrandr extension of the X server (hence the name).
 
 Dependencies:
-  X11, Xrandr, imlib2, confuse
+  X11, Xrandr, imlib2, confuse, libev
 
 The main setup is done via a config file with one ore more output sections, e.g.
 
