@@ -21,7 +21,7 @@ output "VGA1" {
 }
 
 If xrandrbg.conf is your configuration file, call
- xrandr xrandrbg.conf
+ xrandrbg xrandrbg.conf
 
 Currently environment variables and ~ are not expanded, but it will come in the future.
 
